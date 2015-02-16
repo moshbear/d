@@ -209,7 +209,8 @@ struct D_delay {
 // Anything in D_X_* is unsupported when used externally.
 #define D_X_CATX(X,Y) X##Y
 #define D_X_CAT(X,Y) D_X_CATX(X,Y)
-#define D_X_CAT3(X,Y,Z) D_X_CAT(X,D_X_CATX(Y,Z))
+#define D_X_CAT3X(X,Y,Z) X##Y##Z
+#define D_X_CAT3(X,Y,Z) D_X_CAT3X(X,Y,Z)
 #ifndef NDEBUG
 #define D_eval(L, ...) if (D_ok(D_add_context(L))) do { __VA_ARGS__; } while(0)
 #define D_print(L, o, s) if (D_ok(D_add_context(L))) do { D_xprint(D_add_context(L), o, s); } while(0)

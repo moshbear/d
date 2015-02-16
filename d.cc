@@ -1,5 +1,5 @@
 // Implementation details for debug level states.
-// 2015.02.15-           r2
+// 2015.02.15- r2
 // 2014.12.09-2015.02.14 r1
 // Licenced under WTFPL.
 
@@ -234,7 +234,7 @@ std::unique_ptr<devnull_streambuf<char>> ign_sb;
 std::unique_ptr<std::ostream> ign_fp;
 std::ostream* cur_ofp { nullptr };
 D_flag_type flags { D_flag_type() };
-bool ofp_delaybit { false };
+int ofp_delaybit { 0 };
 
 inline bool ofp_is_file() {
 	return cur_ofp == f_ptr.get();
@@ -322,7 +322,7 @@ std::ostream& operator<< (std::ostream& out, D_context const& d) {
 }
 
 void D_set_file(std::string const& f) {
-	if (ofp_delaybit && ofp_is_file() && (flags & D_flag_ofp_throw))
+	if ((ofp_delaybit > 0) && ofp_is_file() && (flags & D_flag_ofp_throw))
 		throw std::invalid_argument("File change while delay bit set and file is current ofp");
 	if (f_ptr)
 		f_ptr->close();
@@ -330,7 +330,7 @@ void D_set_file(std::string const& f) {
 }
 
 void D_unset_file() {
-	if (ofp_delaybit && ofp_is_file() && (flags & D_flag_ofp_throw))
+	if ((ofp_delaybit > 0) && ofp_is_file() && (flags & D_flag_ofp_throw))
 		throw std::invalid_argument("File change while delay bit set and file is current ofp");
 	if (f_ptr)
 		f_ptr->close();
@@ -342,7 +342,7 @@ void D_set_xparam(D_flag_type f) {
 }
 
 std::ostream* D_ofp() {
-	if (ofp_delaybit)
+	if (ofp_delaybit > 0)
 		return cur_ofp;
 	std::ostream* next_fp (nullptr);
 	if (flags & D_flag_lib) {
@@ -374,10 +374,10 @@ std::ostream* D_ofp_ignore() {
 
 
 void D_delay_ofp() {
-	ofp_delaybit = true;
+	++ofp_delaybit;
 }
 
 void D_undelay_ofp() {
-	ofp_delaybit = false;
+	--ofp_delaybit;
 }
 
