@@ -1,7 +1,6 @@
 // Implementation details for debug level states.
-// 2014.12.30 moshbear v2 bugfixes
-// 2014.12.27 moshbear v2
-// 2014.12.09 moshbear v1
+// 2015.02.15-           r2
+// 2014.12.09-2015.02.14 r1
 // Licenced under WTFPL.
 
 #include <mutex>
@@ -9,6 +8,7 @@
 #include <string>
 #include <utility>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <type_traits>
@@ -17,6 +17,7 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/range/adaptor/reversed.hpp>
 #include <boost/tokenizer.hpp>
+
 
 #include <d.hh>
 
@@ -133,6 +134,7 @@ char const* d_name(D_level d) {
 	return dn_unk;
 }
 
+// Simple D_level parser
 D_level dl_from_string(std::string const& str) {
 	D_level d;
 	switch (tolower(str[0])) {
@@ -149,7 +151,7 @@ D_level dl_from_string(std::string const& str) {
 
 // ID expansion and parsing
 //
-char const* id_sep = ".";
+char const* id_sep = ":";
 char const* param_sep = ",";
 char const* kv_sep = "=";
 
@@ -211,9 +213,33 @@ void do_set(C<char const *> const& ids, char const* tailp, D_level d) {
 
 }
 
+// Streambuf emulating /dev/null.
+template <typename CT, typename TT = std::char_traits<CT>>
+class devnull_streambuf : public std::basic_streambuf<CT, TT> {
+protected:
+	typename std::basic_streambuf<CT,TT>::int_type
+	overflow(typename std::basic_streambuf<CT,TT>::int_type c = TT::eof());
+};
+
+template <typename CT, typename TT>
+typename std::basic_streambuf<CT,TT>::int_type
+devnull_streambuf<CT,TT>::overflow(typename std::basic_streambuf<CT,TT>::int_type)
+{
+	this->setp(this->pbase(), this->epptr());
+	return TT::to_int_type(0);
 }
 
+std::unique_ptr<std::ofstream> f_ptr;
+std::unique_ptr<devnull_streambuf<char>> ign_sb;
+std::unique_ptr<std::ostream> ign_fp;
+std::ostream* cur_ofp { nullptr };
+D_flag_type flags { D_flag_type() };
+bool ofp_delaybit { false };
 
+inline bool ofp_is_file() {
+	return cur_ofp == f_ptr.get();
+}
+}
 
 void D_set(D_context const& d) {
 	do_set(reverse_view(*d.id), d.id->id, d.level);
@@ -238,15 +264,6 @@ D_level D_get(D_id_list const& idx) {
 	return d;
 }
 
-bool D_ok(D_context const& d) {
-	return static_cast<int>(d.level) <= static_cast<int>(D_get(*d.id));
-}
-
-
-void D_xprint(D_context const& d, std::ostream& o, std::string const& s) {
-	o << d << ": " << s << '\n';
-}
-
 void D_set_from_string(std::string const& str) {
 	D_set(D_add_context(D_silent));
 	boost::char_separator<char> p_sep(param_sep);
@@ -260,7 +277,7 @@ void D_set_from_string(std::string const& str) {
 			// scope of key part needs to be pulled up so iterators used by boost::tokenizer are valid
 			auto key = param.substr(0, kv_pos);
 			boost::tokenizer<decltype(i_sep)> ids(key, i_sep);
-			for (auto const& id : ids) 
+			for (auto const& id : ids)
 				scopes.push_back(std::string(id));
 		}
 		std::vector<char const*> sp;
@@ -269,7 +286,6 @@ void D_set_from_string(std::string const& str) {
 		do_set(sp, sp.back(), dl_from_string(param.substr(kv_pos + 1)));
 	}
 }
-
 
 void D_set_from_args(int argc, char const* const* argv, char const* d_str) {
 	if (argc < 1) {
@@ -304,3 +320,64 @@ std::ostream& operator<< (std::ostream& out, D_level const lv) {
 std::ostream& operator<< (std::ostream& out, D_context const& d) {
 	return out << d.level << ' ' << *d.id;
 }
+
+void D_set_file(std::string const& f) {
+	if (ofp_delaybit && ofp_is_file() && (flags & D_flag_ofp_throw))
+		throw std::invalid_argument("File change while delay bit set and file is current ofp");
+	if (f_ptr)
+		f_ptr->close();
+	f_ptr.reset(new std::ofstream(f));
+}
+
+void D_unset_file() {
+	if (ofp_delaybit && ofp_is_file() && (flags & D_flag_ofp_throw))
+		throw std::invalid_argument("File change while delay bit set and file is current ofp");
+	if (f_ptr)
+		f_ptr->close();
+	f_ptr.reset(nullptr);
+}
+
+void D_set_xparam(D_flag_type f) {
+	flags = f;
+}
+
+std::ostream* D_ofp() {
+	if (ofp_delaybit)
+		return cur_ofp;
+	std::ostream* next_fp (nullptr);
+	if (flags & D_flag_lib) {
+		if (f_ptr) {
+			next_fp = f_ptr.get();
+		} else {
+			if (flags & D_flag_lib_throw)
+				throw std::invalid_argument("Lib mode and missing file");
+			else
+				next_fp = D_ofp_ignore();
+		}
+	} else {
+		if (f_ptr)
+			next_fp = f_ptr.get();
+		else
+			next_fp = &std::cerr;
+	}
+
+	return (cur_ofp = next_fp);
+}
+
+std::ostream* D_ofp_ignore() {
+	if (!ign_fp) {
+		ign_sb.reset(new devnull_streambuf<char>);
+		ign_fp.reset(new std::ostream(ign_sb.get()));
+	}
+	return ign_fp.get();
+}
+
+
+void D_delay_ofp() {
+	ofp_delaybit = true;
+}
+
+void D_undelay_ofp() {
+	ofp_delaybit = false;
+}
+
